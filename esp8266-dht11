@@ -1,0 +1,136 @@
+//ESP8266 et DHT11
+
+//on inclus
+#include <DHT.h>
+#include <ESP8266WiFi.h>
+#include <WiFiClient.h>
+#include <ESP8266WebServer.h>
+
+//on declare
+#define DELAIS 30 // en secondes
+#define DHTTYPE DHT11
+#define DHTPIN  2
+
+//on demarre
+DHT dht(DHTPIN, DHTTYPE, 11);
+WiFiClient client;
+ESP8266WebServer server(80);
+
+
+// replace with your channel's thingspeak API key,
+String apiKey = "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXx";
+const char* ssid = "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXx";
+const char* password = "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXx";
+const char* server_ts = "api.thingspeak.com";
+
+
+float humidity, temp_f;  // Values read from sensor
+String webString="";     // String to display
+int res=0;              //variable pour le retour ok/nok de la recup des datas
+
+void handle_root() {
+  server.send(200, "text/plain", "Hello from the weather esp8266, read from /temp or /humidity");
+  delay(100);
+}
+
+
+void setup() {
+   
+  //on active la console a 115000 bauds
+  Serial.begin(115200);
+
+  //on demarre le dht11
+  dht.begin();     
+  delay(10);
+  
+  //connection au wifi
+  WiFi.begin(ssid, password);
+  Serial.println();
+  Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("");
+  Serial.println("WiFi connected");
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+
+  //gestion serveur
+  server.on("/", handle_root);
+  
+  server.on("/temp", [](){  // if you add this subdirectory to your webserver call, you get text below :)
+    res=gettemperature();       // read sensor
+    webString="Temperature: "+String((int)temp_f)+" F";   // Arduino has a hard time with float to string
+    server.send(200, "text/plain", webString);            // send to someones browser when asked
+  });
+ 
+  server.on("/humidity", [](){  // if you add this subdirectory to your webserver call, you get text below :)
+    res=gettemperature();           // read sensor
+    webString="Humidity: "+String((int)humidity)+"%";
+    server.send(200, "text/plain", webString);               // send to someones browser when asked
+  });
+  server.begin();
+  Serial.println("HTTP server started");
+
+  
+} //fin setup
+
+void loop() {
+  //recup de la temperature et humidite
+  res=gettemperature();
+  Serial.println("res: "+String(res));
+  //on envoi vers thingspeak
+  if (client.connect(server_ts, 80) and res) { //   "184.106.153.149" or api.thingspeak.com
+    String postStr = apiKey;
+    postStr += "&field1=";
+    postStr += String(temp_f);
+    postStr += "&field2=";
+    postStr += String(humidity);
+    postStr += "\r\n\r\n";
+    client.print("POST /update HTTP/1.1\n");
+    client.print("Host: api.thingspeak.com\n");
+    client.print("Connection: close\n");
+    client.print("X-THINGSPEAKAPIKEY: " + apiKey + "\n");
+    client.print("Content-Type: application/x-www-form-urlencoded\n");
+    client.print("Content-Length: ");
+    client.print(postStr.length());
+    client.print("\n\n");
+    client.print(postStr);
+
+    //on affiche les infos sur le serial
+    Serial.print("temp: ");
+    Serial.print(temp_f);
+    Serial.print(" °C -- ");
+    Serial.print("hum: ");
+    Serial.print(humidity);
+    Serial.print(" % -- ");
+    Serial.println("% send to Thingspeak");
+
+  }
+  client.stop();
+  if (not res) { Serial.println("Echec de la lecture des datas..."); }
+  //on attends
+  Serial.print("Waiting...");
+  Serial.print(DELAIS);
+  Serial.println("Secondes.");
+
+  // attente entre 2 mesures
+  delay(DELAIS * 1000);
+
+}
+
+
+int gettemperature() {
+    humidity = dht.readHumidity();      // on demande al lecture du capteur
+    temp_f = dht.readTemperature();     // on lit la temperature t l'humidite
+    // on regarde si ca a marche si on ecrit dans le serial
+    if (isnan(humidity) || isnan(temp_f)) {
+      Serial.println("Failed to read from DHT sensor!");
+      return 0;
+    }
+  return 1;
+}
